@@ -459,6 +459,7 @@ function showPermissionBubble(permEntry) {
   });
 
   permEntry.bubble = bub;
+  permEntry.bubbleReady = false;
 
   if (isWin) {
     bub.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
@@ -467,26 +468,8 @@ function showPermissionBubble(permEntry) {
   bub.loadFile(path.join(__dirname, "bubble.html"));
 
   bub.webContents.once("did-finish-load", () => {
-    // Session disambiguation: same as Sessions submenu (state.js:648-649) so the
-    // bubble matches what the user sees in the right-click menu. Lets users tell
-    // apart multiple permission requests from the same project directory.
-    const sess = ctx.sessions.get(permEntry.sessionId);
-    const sessionFolder = sess && sess.cwd ? path.basename(sess.cwd) : null;
-    const sessionShortId = permEntry.sessionId
-      ? String(permEntry.sessionId).slice(-3)
-      : null;
-    bub.webContents.send("permission-show", {
-      toolName: permEntry.toolName,
-      toolInput: permEntry.toolInput,
-      suggestions: permEntry.suggestions || [],
-      lang: ctx.lang,
-      isElicitation: permEntry.isElicitation || false,
-      isOpencode: permEntry.isOpencode || false,
-      opencodeAlways: permEntry.opencodeAlwaysCandidates || [],
-      opencodePatterns: permEntry.opencodePatterns || [],
-      sessionFolder,
-      sessionShortId,
-    });
+    permEntry.bubbleReady = true;
+    syncPermissionBubbleContent(permEntry);
     // Don't call bub.focus() — it steals focus from terminal and can trigger
     // false "User answered in terminal" denials in Claude Code, wasting tokens.
   });
@@ -512,12 +495,39 @@ function showPermissionBubble(permEntry) {
   syncPermissionShortcuts();
 }
 
-function resolvePermissionEntry(permEntry, behavior, message) {
-  // Codex notify bubbles have no HTTP connection — route to dedicated cleanup
-  if (permEntry.isCodexNotify || permEntry.isKimiNotify) {
-    dismissPassiveNotify(permEntry);
-    return;
-  }
+function buildPermissionBubblePayload(permEntry) {
+  const sess = ctx.sessions.get(permEntry.sessionId);
+  const sessionFolder = sess && sess.cwd ? path.basename(sess.cwd) : null;
+  const sessionShortId = permEntry.sessionId
+    ? String(permEntry.sessionId).slice(-3)
+    : null;
+  return {
+    toolName: permEntry.toolName,
+    toolInput: permEntry.toolInput,
+    suggestions: permEntry.suggestions || [],
+    lang: ctx.lang,
+    isElicitation: permEntry.isElicitation || false,
+    isOpencode: permEntry.isOpencode || false,
+    opencodeAlways: permEntry.opencodeAlwaysCandidates || [],
+    opencodePatterns: permEntry.opencodePatterns || [],
+    sessionFolder,
+    sessionShortId,
+  };
+}
+
+function syncPermissionBubbleContent(permEntry) {
+  const bub = permEntry && permEntry.bubble;
+  if (!bub || bub.isDestroyed() || !permEntry.bubbleReady) return false;
+  bub.webContents.send("permission-show", buildPermissionBubblePayload(permEntry));
+  return true;
+}
+
+  function resolvePermissionEntry(permEntry, behavior, message) {
+    // Codex notify bubbles have no HTTP connection — route to dedicated cleanup
+    if (permEntry.isCodexNotify || permEntry.isKimiNotify) {
+      dismissPassiveNotify(permEntry, `resolve:${behavior || "unknown"}`);
+      return;
+    }
   const idx = pendingPermissions.indexOf(permEntry);
   if (idx === -1) return;
 
@@ -701,7 +711,7 @@ function handleDecide(event, behavior) {
   permLog(`IPC permission-decide: behavior=${behavior} matched=${!!perm}`);
   if (!perm) return;
   if (perm.isCodexNotify || perm.isKimiNotify) {
-    dismissPassiveNotify(perm);
+    dismissPassiveNotify(perm, "ipc-decide");
     return;
   }
   if (perm.isElicitation && behavior && typeof behavior === "object" && behavior.type === "elicitation-submit") {
@@ -765,6 +775,15 @@ function showCodexNotifyBubble({ sessionId, command }) {
     return;
   }
   const policy = getPolicy(ctx, "notification");
+  const existing = findCodexNotifyEntryBySession(sessionId);
+  if (existing) {
+    existing.toolInput = { command: command || "(unknown)" };
+    existing.createdAt = Date.now();
+    permLog(`passive notify refresh: agent=codex session=${sessionId} autoCloseMs=${policy.autoCloseMs}`);
+    syncPermissionBubbleContent(existing);
+    schedulePassiveNotifyAutoExpire(existing, policy.autoCloseMs);
+    return;
+  }
   const permEntry = {
     res: null,
     abortHandler: null, suggestions: [],
@@ -778,6 +797,7 @@ function showCodexNotifyBubble({ sessionId, command }) {
   };
   pendingPermissions.push(permEntry);
   showPermissionBubble(permEntry);
+  permLog(`passive notify show: agent=codex session=${sessionId} autoCloseMs=${policy.autoCloseMs}`);
   schedulePassiveNotifyAutoExpire(permEntry, policy.autoCloseMs);
 }
 
@@ -801,12 +821,27 @@ function showKimiNotifyBubble({ sessionId, command }) {
   };
   pendingPermissions.push(permEntry);
   showPermissionBubble(permEntry);
+  permLog(`passive notify show: agent=kimi-cli session=${sessionId} autoCloseMs=${policy.autoCloseMs}`);
   schedulePassiveNotifyAutoExpire(permEntry, policy.autoCloseMs);
 }
 
-function dismissPassiveNotify(permEntry) {
+function getPassiveNotifyAgentId(permEntry) {
+  if (permEntry?.isCodexNotify) return "codex";
+  if (permEntry?.isKimiNotify) return "kimi-cli";
+  return permEntry?.agentId || "unknown";
+}
+
+function findCodexNotifyEntryBySession(sessionId) {
+  if (!sessionId) return null;
+  return pendingPermissions.find((permEntry) => permEntry && permEntry.isCodexNotify && permEntry.sessionId === sessionId) || null;
+}
+
+function dismissPassiveNotify(permEntry, reason = "unknown") {
   const idx = pendingPermissions.indexOf(permEntry);
   if (idx === -1) return;
+  permLog(
+    `passive notify dismiss: agent=${getPassiveNotifyAgentId(permEntry)} session=${permEntry.sessionId || "(none)"} reason=${reason}`
+  );
   pendingPermissions.splice(idx, 1);
   if (permEntry.autoExpireTimer) clearTimeout(permEntry.autoExpireTimer);
   if (permEntry.hideTimer) clearTimeout(permEntry.hideTimer);
@@ -827,12 +862,15 @@ function schedulePassiveNotifyAutoExpire(permEntry, autoCloseMs, now = Date.now(
     permEntry.autoExpireTimer = null;
   }
   const remainingMs = computePassiveNotifyRemainingMs(permEntry.createdAt, autoCloseMs, now);
+  permLog(
+    `passive notify schedule: agent=${getPassiveNotifyAgentId(permEntry)} session=${permEntry.sessionId || "(none)"} autoCloseMs=${autoCloseMs} remainingMs=${remainingMs}`
+  );
   if (remainingMs <= 0) {
-    dismissPassiveNotify(permEntry);
+    dismissPassiveNotify(permEntry, "auto-expire-immediate");
     return false;
   }
   permEntry.autoExpireTimer = setTimeout(() => {
-    dismissPassiveNotify(permEntry);
+    dismissPassiveNotify(permEntry, "auto-expire-timeout");
   }, remainingMs);
   return true;
 }
@@ -847,6 +885,7 @@ function refreshPassiveNotifyAutoClose() {
     processed += 1;
     schedulePassiveNotifyAutoExpire(permEntry, policy.autoCloseMs, now);
   }
+  permLog(`passive notify refresh: processed=${processed} autoCloseMs=${policy.autoCloseMs}`);
   return processed;
 }
 
@@ -858,7 +897,7 @@ function dismissPermissionsByAgent(agentId) {
   if (toDismiss.length === 0) return 0;
   for (const perm of toDismiss) {
     if (perm.isCodexNotify || perm.isKimiNotify) {
-      dismissPassiveNotify(perm);
+      dismissPassiveNotify(perm, `dismiss-by-agent:${agentId}`);
       continue;
     }
     const idx = pendingPermissions.indexOf(perm);
@@ -921,21 +960,21 @@ function dismissInteractivePermissionBubbles() {
   return toDismiss.length;
 }
 
-function clearCodexNotifyBubbles(sessionId) {
+function clearCodexNotifyBubbles(sessionId, reason = sessionId ? "codex-session-activity" : "codex-global-clear") {
   if (!pendingPermissions.some(p => p.isCodexNotify)) return;
   const toRemove = sessionId
     ? pendingPermissions.filter((p) => p.isCodexNotify && p.sessionId === sessionId)
     : pendingPermissions.filter((p) => p.isCodexNotify);
-  for (const perm of toRemove) dismissPassiveNotify(perm);
+  for (const perm of toRemove) dismissPassiveNotify(perm, reason);
 }
 
-function clearKimiNotifyBubbles(sessionId) {
+function clearKimiNotifyBubbles(sessionId, reason = sessionId ? "kimi-session-release" : "kimi-global-clear") {
   const hasKimi = pendingPermissions.some(p => p.isKimiNotify);
   if (!hasKimi) return;
   const toRemove = sessionId
     ? pendingPermissions.filter((p) => p.isKimiNotify && p.sessionId === sessionId)
     : pendingPermissions.filter((p) => p.isKimiNotify);
-  for (const perm of toRemove) dismissPassiveNotify(perm);
+  for (const perm of toRemove) dismissPassiveNotify(perm, reason);
 }
 
 function cleanup() {

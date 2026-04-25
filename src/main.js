@@ -1429,13 +1429,13 @@ function wireSettingsSubscribers() {
     if (
       ("notificationBubbleAutoCloseSeconds" in changes && changes.notificationBubbleAutoCloseSeconds === 0) ||
       ("hideBubbles" in changes && changes.hideBubbles === true)
-    ) {
-      try {
-        clearCodexNotifyBubbles();
-        clearKimiNotifyBubbles();
-      } catch (err) {
-        console.warn("Clawd: clear notification bubbles failed:", err && err.message);
-      }
+      ) {
+        try {
+          clearCodexNotifyBubbles(undefined, "settings-policy-disabled");
+          clearKimiNotifyBubbles(undefined, "settings-policy-disabled");
+        } catch (err) {
+          console.warn("Clawd: clear notification bubbles failed:", err && err.message);
+        }
     } else if (
       "notificationBubbleAutoCloseSeconds" in changes &&
       changes.notificationBubbleAutoCloseSeconds > 0
@@ -3800,7 +3800,7 @@ if (!gotTheLock) {
           });
           return;
         }
-        clearCodexNotifyBubbles(sid);
+        clearCodexNotifyBubbles(sid, `codex-state-transition:${state}`);
         updateSession(sid, state, event, {
           cwd: extra.cwd,
           agentId: "codex",
