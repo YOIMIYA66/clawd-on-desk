@@ -137,6 +137,20 @@ describe("settings renderer browser environment", () => {
     assert.ok(i18nSource.includes("bubbleSecondsPrefix"));
   });
 
+  it("auto-commits bubble seconds shortly after valid input instead of waiting only for change", () => {
+    const generalSource = fs.readFileSync(path.join(SRC_DIR, "settings-tab-general.js"), "utf8");
+    assert.ok(generalSource.includes("BUBBLE_SECONDS_AUTO_COMMIT_DELAY_MS"));
+    assert.ok(generalSource.includes('input.addEventListener("input", () => {'));
+    assert.ok(generalSource.includes("scheduleSecondsCommit(next);"));
+    assert.ok(generalSource.includes('input.addEventListener("blur", () => {'));
+    assert.ok(generalSource.includes("flushSecondsCommit();"));
+    assert.ok(generalSource.includes('input.addEventListener("change", () => {'));
+    assert.ok(generalSource.includes("const next = parseBubbleSecondsInputValue(raw);"));
+    assert.ok(generalSource.includes('if (category === "update" && next === 0) return;'));
+    assert.ok(generalSource.includes("commitSecondsValue(secondsInput, secondsKey, next, category)"));
+    assert.ok(!generalSource.includes("commitSecondsValue(input, secondsKey, next, category).then("));
+  });
+
   it("keeps update bubble disable confirmation inside the Settings renderer", () => {
     const preloadSource = fs.readFileSync(PRELOAD_SETTINGS, "utf8");
     const mainSource = fs.readFileSync(MAIN_PROCESS, "utf8");
