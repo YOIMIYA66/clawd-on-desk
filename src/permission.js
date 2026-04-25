@@ -79,6 +79,18 @@ function getPolicy(ctx, kind) {
   return { enabled: !ctx.hideBubbles, autoCloseMs: 0 };
 }
 
+function isPassiveNotifyEntry(permEntry) {
+  return !!(permEntry && (permEntry.isCodexNotify || permEntry.isKimiNotify));
+}
+
+function computePassiveNotifyRemainingMs(createdAt, autoCloseMs, now = Date.now()) {
+  const totalMs = Number(autoCloseMs);
+  if (!Number.isFinite(totalMs) || totalMs <= 0) return 0;
+  const startedAt = Number(createdAt);
+  if (!Number.isFinite(startedAt) || startedAt <= 0) return totalMs;
+  return Math.max(0, totalMs - Math.max(0, now - startedAt));
+}
+
 // Pure layout calculator for the permission bubble stack. Extracted out of
 // repositionBubbles() so the geometry can be unit-tested without spinning up
 // real Electron BrowserWindows. Returns one bounds object per height in the
@@ -742,11 +754,7 @@ function showCodexNotifyBubble({ sessionId, command }) {
   };
   pendingPermissions.push(permEntry);
   showPermissionBubble(permEntry);
-  if (policy.autoCloseMs > 0) {
-    permEntry.autoExpireTimer = setTimeout(() => {
-      dismissPassiveNotify(permEntry);
-    }, policy.autoCloseMs);
-  }
+  schedulePassiveNotifyAutoExpire(permEntry, policy.autoCloseMs);
 }
 
 function showKimiNotifyBubble({ sessionId, command }) {
@@ -769,11 +777,7 @@ function showKimiNotifyBubble({ sessionId, command }) {
   };
   pendingPermissions.push(permEntry);
   showPermissionBubble(permEntry);
-  if (policy.autoCloseMs > 0) {
-    permEntry.autoExpireTimer = setTimeout(() => {
-      dismissPassiveNotify(permEntry);
-    }, policy.autoCloseMs);
-  }
+  schedulePassiveNotifyAutoExpire(permEntry, policy.autoCloseMs);
 }
 
 function dismissPassiveNotify(permEntry) {
@@ -790,6 +794,36 @@ function dismissPassiveNotify(permEntry) {
   repositionBubbles();
   repositionDependentBubbles();
   syncPermissionShortcuts();
+}
+
+function schedulePassiveNotifyAutoExpire(permEntry, autoCloseMs, now = Date.now()) {
+  if (!isPassiveNotifyEntry(permEntry)) return false;
+  if (permEntry.autoExpireTimer) {
+    clearTimeout(permEntry.autoExpireTimer);
+    permEntry.autoExpireTimer = null;
+  }
+  const remainingMs = computePassiveNotifyRemainingMs(permEntry.createdAt, autoCloseMs, now);
+  if (remainingMs <= 0) {
+    dismissPassiveNotify(permEntry);
+    return false;
+  }
+  permEntry.autoExpireTimer = setTimeout(() => {
+    dismissPassiveNotify(permEntry);
+  }, remainingMs);
+  return true;
+}
+
+function refreshPassiveNotifyAutoClose() {
+  const passiveEntries = pendingPermissions.filter(isPassiveNotifyEntry);
+  if (passiveEntries.length === 0) return 0;
+  const policy = getPolicy(ctx, "notification");
+  const now = Date.now();
+  let processed = 0;
+  for (const permEntry of [...passiveEntries]) {
+    processed += 1;
+    schedulePassiveNotifyAutoExpire(permEntry, policy.autoCloseMs, now);
+  }
+  return processed;
 }
 
 // Mirrors the DND dispatcher: CC res.destroy() so it falls back to chat,
@@ -908,6 +942,7 @@ return {
   handleBubbleHeight, handleDecide, cleanup,
   showCodexNotifyBubble, clearCodexNotifyBubbles,
   showKimiNotifyBubble, clearKimiNotifyBubbles,
+  refreshPassiveNotifyAutoClose,
   dismissPermissionsByAgent, dismissInteractivePermissionBubbles,
   syncPermissionShortcuts,
   replyOpencodePermission,
@@ -919,6 +954,7 @@ return {
 // hit the pure layout function without standing up Electron / ctx mocks.
 module.exports.__test = {
   computeBubbleStackLayout,
+  computePassiveNotifyRemainingMs,
   shouldSuppressCodexNotifyBubble,
   buildElicitationUpdatedInput,
 };

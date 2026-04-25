@@ -1436,6 +1436,17 @@ function wireSettingsSubscribers() {
       } catch (err) {
         console.warn("Clawd: clear notification bubbles failed:", err && err.message);
       }
+    } else if (
+      "notificationBubbleAutoCloseSeconds" in changes &&
+      changes.notificationBubbleAutoCloseSeconds > 0
+    ) {
+      try {
+        if (_perm && typeof _perm.refreshPassiveNotifyAutoClose === "function") {
+          _perm.refreshPassiveNotifyAutoClose();
+        }
+      } catch (err) {
+        console.warn("Clawd: refresh notification bubble timers failed:", err && err.message);
+      }
     }
     if (
       ("updateBubbleAutoCloseSeconds" in changes && changes.updateBubbleAutoCloseSeconds === 0) ||
@@ -1445,6 +1456,17 @@ function wireSettingsSubscribers() {
         if (_updateBubble && typeof _updateBubble.hideForPolicy === "function") _updateBubble.hideForPolicy();
       } catch (err) {
         console.warn("Clawd: hide update bubble failed:", err && err.message);
+      }
+    } else if (
+      "updateBubbleAutoCloseSeconds" in changes &&
+      changes.updateBubbleAutoCloseSeconds > 0
+    ) {
+      try {
+        if (_updateBubble && typeof _updateBubble.refreshAutoCloseForPolicy === "function") {
+          _updateBubble.refreshAutoCloseForPolicy();
+        }
+      } catch (err) {
+        console.warn("Clawd: refresh update bubble timer failed:", err && err.message);
       }
     }
     if ("bubbleFollowPet" in changes) {
