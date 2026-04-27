@@ -2370,6 +2370,10 @@ const SOUND_OVERRIDE_DIALOG_STRINGS = {
   ko: { title: "음향 파일 선택", filterName: "오디오" },
 };
 
+function _getSettingsDialogParent(event) {
+  return BrowserWindow.fromWebContents(event.sender) || settingsWindow || null;
+}
+
 function _cleanupSiblingSoundOverrides(overridesDir, soundName, keepExt) {
   // Replacing a sound with a different extension would otherwise leave the old
   // file as orphaned junk in the overrides dir (not referenced from prefs, but
