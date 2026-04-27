@@ -19,17 +19,21 @@
   <a href="https://github.com/hesreallyhim/awesome-claude-code"><img src="https://awesome.re/mentioned-badge-flat.svg" alt="Mentioned in Awesome Claude Code"></a>
 </p>
 
+<p align="center">
+  <img src="assets/hero.gif" alt="Clawd on Desk — a pixel desktop pet that reacts to your AI coding agent in real time. Animated demo: the crab cycles through sleeping, thinking while the model reads the codebase, typing as edit/bash tools run, juggling 3 parallel subagents, raising a permission bubble, and celebrating when 14 files / 312 tests are complete. Works with Claude Code, Codex, Cursor, Copilot, Gemini and more.">
+</p>
+
 Clawd lives on your desktop and reacts to what your AI coding agent is doing — in real time. Start a long task, walk away, come back when the crab tells you it's done.
 
 Thinking when you prompt, typing when tools run, juggling subagents, reviewing permissions, celebrating when tasks complete, sleeping when you step away. Ships with two built-in themes: **Clawd** (pixel crab) and **Calico** (三花猫), with full support for custom themes.
 
-> Supports Windows 11, macOS, and Ubuntu/Linux. Requires Node.js. Works with **Claude Code**, **Codex CLI**, **Copilot CLI**, **Gemini CLI**, **Cursor Agent**, **CodeBuddy**, **Kiro CLI**, **Kimi Code CLI (Kimi-CLI)**, and **opencode**.
+> Supports Windows 11, macOS, and Ubuntu/Linux. Windows releases provide separate x64 and ARM64 installers. Source builds require Node.js. Works with **Claude Code**, **Codex CLI**, **Copilot CLI**, **Gemini CLI**, **Cursor Agent**, **CodeBuddy**, **Kiro CLI**, **Kimi Code CLI (Kimi-CLI)**, and **opencode**.
 
 ## Features
 
 ### Multi-Agent Support
 - **Claude Code** — full integration via command hooks + HTTP permission hooks
-- **Codex CLI** — automatic JSONL log polling (`~/.codex/sessions/`), no configuration needed
+- **Codex CLI** — official hooks with JSONL fallback (`~/.codex/sessions/`), registered automatically with real permission bubbles
 - **Copilot CLI** — command hooks via `~/.copilot/hooks/hooks.json`
 - **Gemini CLI** — command hooks via `~/.gemini/settings.json` (registered automatically when Clawd starts, or run `npm run install:gemini-hooks`)
 - **Cursor Agent** — [Cursor IDE hooks](https://cursor.com/docs/agent/hooks) in `~/.cursor/hooks.json` (registered automatically when Clawd starts, or run `npm run install:cursor-hooks`)
@@ -69,7 +73,7 @@ Thinking when you prompt, typing when tools run, juggling subagents, reviewing p
 - **Position memory** — Clawd remembers where you left it across restarts (including mini mode)
 - **Single instance lock** — prevents duplicate Clawd windows
 - **Auto-start** — Claude Code's SessionStart hook can launch Clawd automatically if it's not running
-- **Do Not Disturb** — right-click or tray menu to enter sleep mode; all hook events are silenced until you wake Clawd. Permission bubbles are suppressed during DND — opencode falls back to its built-in TUI prompt, while Claude Code and CodeBuddy fall back to their built-in permission flow
+- **Do Not Disturb** — right-click or tray menu to enter sleep mode; all hook events are silenced until you wake Clawd. Permission bubbles are suppressed during DND — Codex and opencode fall back to their native prompts, while Claude Code and CodeBuddy fall back to their built-in permission flow
 - **Sound effects** — short audio cues on task completion and permission requests (toggle via right-click menu; 10s cooldown, auto-muted during DND)
 - **System tray** — resize (S/M/L), DND mode, language switch, auto-start, check for updates
 - **i18n** — English, Chinese, and Korean UI; switch via right-click menu or tray
@@ -117,6 +121,16 @@ Clawd adapts to multi-monitor setups: proportional sizing uses the display Clawd
 
 ## Quick Start
 
+For normal use, download the latest prebuilt installer from **[GitHub Releases](https://github.com/rullerzhou-afk/clawd-on-desk/releases/latest)**:
+
+- **Windows**: `Clawd-on-Desk-Setup-<version>-x64.exe` or `Clawd-on-Desk-Setup-<version>-arm64.exe`
+- **macOS**: `.dmg`
+- **Linux**: `.AppImage` or `.deb`
+
+Launch Clawd after installing it; supported agent hooks/plugins are synced automatically on startup.
+
+Run from source only if you're contributing, testing unreleased code, or debugging integrations. Source installs download Electron/build tooling and can create a large `node_modules` tree.
+
 ```bash
 # Clone the repo
 git clone https://github.com/rullerzhou-afk/clawd-on-desk.git
@@ -129,7 +143,7 @@ npm install
 npm start
 ```
 
-**Claude Code** and **Codex CLI** work out of the box. **Gemini CLI**, **Cursor Agent**, **CodeBuddy**, **Kiro CLI**, **Kimi Code CLI (Kimi-CLI)**, and **opencode** auto-register when Clawd launches (if they're installed). **Copilot CLI** still needs one-time hook setup. Also covers remote SSH, WSL, and platform-specific notes (macOS / Linux): **[docs/guides/setup-guide.md](docs/guides/setup-guide.md)**
+**Claude Code** and **Codex CLI** work out of the box with auto-registered hooks. **Gemini CLI**, **Cursor Agent**, **CodeBuddy**, **Kiro CLI**, **Kimi Code CLI (Kimi-CLI)**, and **opencode** auto-register when Clawd launches (if they're installed). **Copilot CLI** still needs one-time hook setup. Also covers remote SSH, WSL, and platform-specific notes (macOS / Linux): **[docs/guides/setup-guide.md](docs/guides/setup-guide.md)**
 
 For the official `Codex + WSL` status, Clawd's current implementation boundary, and why this is easy to misread, see: **[docs/guides/codex-wsl-clarification.md](docs/guides/codex-wsl-clarification.md)**
 
@@ -178,6 +192,15 @@ Some things we'd like to explore in the future:
 
 Clawd on Desk is a community-driven project. Bug reports, feature ideas, and pull requests are all welcome — open an [issue](https://github.com/rullerzhou-afk/clawd-on-desk/issues) to discuss or submit a PR directly.
 
+### Maintainers
+
+<table>
+  <tr>
+    <td align="center" valign="top" width="140"><a href="https://github.com/rullerzhou-afk"><img src="https://github.com/rullerzhou-afk.png" width="72" style="border-radius:50%" /><br /><sub><b>@rullerzhou-afk</b><br />鹿鹿 · creator</sub></a></td>
+    <td align="center" valign="top" width="140"><a href="https://github.com/YOIMIYA66"><img src="https://github.com/YOIMIYA66.png" width="72" style="border-radius:50%" /><br /><sub><b>@YOIMIYA66</b><br />maintainer</sub></a></td>
+  </tr>
+</table>
+
 ### Contributors
 
 Thanks to everyone who has helped make Clawd better:
@@ -224,6 +247,8 @@ Thanks to everyone who has helped make Clawd better:
     <td align="center" valign="top" width="110"><a href="https://github.com/zeus6768"><img src="https://github.com/zeus6768.png" width="50" style="border-radius:50%" /><br /><sub>zeus6768</sub></a></td>
     <td align="center" valign="top" width="110"><a href="https://github.com/anhtrinh919"><img src="https://github.com/anhtrinh919.png" width="50" style="border-radius:50%" /><br /><sub>anhtrinh919</sub></a></td>
     <td align="center" valign="top" width="110"><a href="https://github.com/tomaioo"><img src="https://github.com/tomaioo.png" width="50" style="border-radius:50%" /><br /><sub>tomaioo</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/v-avuso"><img src="https://github.com/v-avuso.png" width="50" style="border-radius:50%" /><br /><sub>v-avuso</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/livlign"><img src="https://github.com/livlign.png" width="50" style="border-radius:50%" /><br /><sub>livlign</sub></a></td>
   </tr>
 </table>
 

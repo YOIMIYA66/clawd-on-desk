@@ -89,7 +89,7 @@
       bubblePermissionLabel: "Permission / interaction bubbles",
       bubblePermissionDesc: "Off sends approval prompts back to the agent terminal/TUI. Plan review and AskUserQuestion prompts stay visible to avoid agent hangs.",
       bubbleNotificationLabel: "Notification bubbles",
-      bubbleNotificationDesc: "Switch controls Codex / Kimi CLI passive notices. Seconds controls how long each notice stays visible; 0 hides them.",
+      bubbleNotificationDesc: "Switch controls Codex / Kimi CLI passive notices. Seconds sets the auto-close upper bound; later session states may dismiss it earlier. 0 hides them.",
       bubbleUpdateLabel: "Update bubbles",
       bubbleUpdateDesc: "Switch controls update checking, download, success, failure, and restart prompts. Seconds controls how long they stay visible.",
       bubbleUpdateWarning: "Hiding update bubbles is not recommended; you may miss errors or restart prompts.",
@@ -97,7 +97,7 @@
       bubbleSecondsUnit: "s",
       bubbleSecondsInvalid: "Seconds must be an integer from 0 to 3600",
       bubblePolicySummaryPermission: "Permission {state}",
-      bubblePolicySummaryNotification: "Notify {seconds}s",
+      bubblePolicySummaryNotification: "Notify up to {seconds}s",
       bubblePolicySummaryUpdate: "Update {seconds}s",
       bubblePolicySummaryOn: "on",
       bubblePolicySummaryOff: "off",
@@ -235,6 +235,7 @@
       aboutRepositoryLabel: "Repository",
       aboutLicenseLabel: "License",
       aboutAuthorLabel: "Made by",
+      aboutMaintainersLabel: "Maintainers",
       aboutContributorsLabel: "Contributors",
       aboutContributorsShowAll: "Show all",
       aboutContributorsHide: "Hide",
@@ -329,7 +330,7 @@
       bubblePermissionLabel: "权限 / 交互气泡",
       bubblePermissionDesc: "关闭后审批提示会回到 agent 终端 / TUI 处理。Plan review 和 AskUserQuestion 仍会显示，避免 agent 卡住。",
       bubbleNotificationLabel: "通知气泡",
-      bubbleNotificationDesc: "开关控制 Codex / Kimi CLI 被动通知。秒数控制每条通知停留多久；0 表示隐藏。",
+      bubbleNotificationDesc: "开关控制 Codex / Kimi CLI 被动通知。秒数表示自动关闭上限；后续状态可能提前关闭。0 表示隐藏。",
       bubbleUpdateLabel: "更新气泡",
       bubbleUpdateDesc: "开关控制检查更新、下载、成功、失败和重启提示。秒数控制它们停留多久。",
       bubbleUpdateWarning: "不建议隐藏更新气泡，否则可能错过失败原因或重启提示。",
@@ -337,7 +338,7 @@
       bubbleSecondsUnit: "秒",
       bubbleSecondsInvalid: "秒数必须是 0 到 3600 的整数",
       bubblePolicySummaryPermission: "权限{state}",
-      bubblePolicySummaryNotification: "通知 {seconds} 秒",
+      bubblePolicySummaryNotification: "通知最多 {seconds} 秒",
       bubblePolicySummaryUpdate: "更新 {seconds} 秒",
       bubblePolicySummaryOn: "开",
       bubblePolicySummaryOff: "关",
@@ -473,6 +474,7 @@
       aboutRepositoryLabel: "代码仓库",
       aboutLicenseLabel: "开源协议",
       aboutAuthorLabel: "作者",
+      aboutMaintainersLabel: "维护者",
       aboutContributorsLabel: "贡献者",
       aboutContributorsShowAll: "展开全部",
       aboutContributorsHide: "收起",
@@ -567,7 +569,7 @@
       bubblePermissionLabel: "권한 / 상호작용 말풍선",
       bubblePermissionDesc: "끄면 승인 프롬프트가 에이전트 터미널/TUI로 돌아갑니다. Plan review와 AskUserQuestion 프롬프트는 에이전트가 멈추지 않도록 계속 표시됩니다.",
       bubbleNotificationLabel: "알림 말풍선",
-      bubbleNotificationDesc: "스위치는 Codex / Kimi CLI 수동 알림 표시를 제어합니다. 초 값은 각 알림이 유지되는 시간이며, 0이면 숨깁니다.",
+      bubbleNotificationDesc: "스위치는 Codex / Kimi CLI 수동 알림 표시를 제어합니다. 초 값은 자동 종료 상한이며, 후속 상태가 더 일찍 닫을 수 있습니다. 0이면 숨깁니다.",
       bubbleUpdateLabel: "업데이트 말풍선",
       bubbleUpdateDesc: "스위치는 업데이트 확인, 다운로드, 성공, 실패, 재시작 안내 표시를 제어합니다. 초 값은 표시 시간을 제어합니다.",
       bubbleUpdateWarning: "업데이트 말풍선을 숨기면 오류 원인이나 재시작 안내를 놓칠 수 있어 권장하지 않습니다.",
@@ -575,7 +577,7 @@
       bubbleSecondsUnit: "초",
       bubbleSecondsInvalid: "초 값은 0부터 3600 사이의 정수여야 합니다",
       bubblePolicySummaryPermission: "권한 {state}",
-      bubblePolicySummaryNotification: "알림 {seconds}초",
+      bubblePolicySummaryNotification: "알림 최대 {seconds}초",
       bubblePolicySummaryUpdate: "업데이트 {seconds}초",
       bubblePolicySummaryOn: "켜짐",
       bubblePolicySummaryOff: "꺼짐",
@@ -711,6 +713,7 @@
       aboutRepositoryLabel: "저장소",
       aboutLicenseLabel: "라이선스",
       aboutAuthorLabel: "제작",
+      aboutMaintainersLabel: "메인테이너",
       aboutContributorsLabel: "기여자",
       aboutContributorsShowAll: "모두 보기",
       aboutContributorsHide: "접기",
@@ -720,16 +723,21 @@
     },
   };
 
+  const MAINTAINERS = [
+    "rullerzhou-afk", "YOIMIYA66",
+  ];
+
   const CONTRIBUTORS = [
     "PixelCookie-zyf", "yujiachen-y", "AooooooZzzz", "purefkh", "Tobeabellwether", "Jasonhonghh", "crashchen",
     "hongbigtou", "InTimmyDate", "NeizhiTouhu", "xu3stones-cmd", "androidZzT", "Ye-0413", "WanfengzzZ",
     "TaoXieSZ", "ssly", "stickycandy", "Rladmsrl", "YOIMIYA66", "Kevin7Qi", "sefuzhou770801-hub",
     "Tonic-Jin", "seoki180", "sophie-haynes", "PeterShanxin", "CHIANGANGSTER", "JaeHyeon-KAIST", "hhhzxyhhh",
-    "TVpoet", "zeus6768", "anhtrinh919", "tomaioo",
+    "TVpoet", "zeus6768", "anhtrinh919", "tomaioo", "v-avuso", "livlign",
   ];
 
   root.ClawdSettingsI18n = {
     STRINGS,
+    MAINTAINERS,
     CONTRIBUTORS,
   };
 })(globalThis);

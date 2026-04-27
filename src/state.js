@@ -860,6 +860,7 @@ function updateSession(sessionId, state, event, opts = {}) {
     displayHint = undefined,
     sessionTitle = null,
     permissionSuspect = false,
+    hookSource = null,
   } = opts;
   if (startupRecoveryActive) {
     startupRecoveryActive = false;
@@ -902,7 +903,7 @@ function updateSession(sessionId, state, event, opts = {}) {
   const isSubagentStart = event === "SubagentStart" || event === "subagentStart";
   const isSubagentStop = event === "SubagentStop" || event === "subagentStop";
 
-  debugSession(`event ${describeSession(sessionId, existing)} -> incoming=${state}/${event || "-"} hint=${displayHint || "-"}`);
+  debugSession(`event ${describeSession(sessionId, existing)} -> incoming=${state}/${event || "-"} hint=${displayHint || "-"} source=${hookSource || "-"}`);
 
   const pidReachable = existing ? existing.pidReachable :
     (srcAgentPid ? isProcessAlive(srcAgentPid) : (srcPid ? isProcessAlive(srcPid) : false));
@@ -1104,7 +1105,7 @@ function cleanStaleSessions() {
     // (PID exit / unreachable / source-exit) we bypass that path, so the
     // passive "Check Kimi terminal" bubble would otherwise stay forever.
     if ((hold || hadSuspect) && typeof ctx.clearKimiNotifyBubbles === "function") {
-      ctx.clearKimiNotifyBubbles(id);
+      ctx.clearKimiNotifyBubbles(id, "kimi-session-disposed");
     }
   };
   for (const [id, s] of sessions) {
@@ -1195,7 +1196,7 @@ function clearSessionsByAgent(agentId) {
         // passive bubble. clearKimiNotifyBubbles is a no-op when nothing
         // matches.
         if ((hold || hadSuspect) && typeof ctx.clearKimiNotifyBubbles === "function") {
-          ctx.clearKimiNotifyBubbles(id);
+          ctx.clearKimiNotifyBubbles(id, "kimi-clear-sessions");
         }
       }
       removed++;
@@ -1214,7 +1215,7 @@ function clearSessionsByAgent(agentId) {
       kimiPermissionHolds.delete(id);
       cancelPermissionSuspect(id);
       if (typeof ctx.clearKimiNotifyBubbles === "function") {
-        ctx.clearKimiNotifyBubbles(id);
+        ctx.clearKimiNotifyBubbles(id, "kimi-orphan-hold-cleared");
       }
       removed++;
     }
@@ -1222,7 +1223,7 @@ function clearSessionsByAgent(agentId) {
     for (const id of orphanSuspects) {
       cancelPermissionSuspect(id);
       if (typeof ctx.clearKimiNotifyBubbles === "function") {
-        ctx.clearKimiNotifyBubbles(id);
+        ctx.clearKimiNotifyBubbles(id, "kimi-orphan-suspect-cleared");
       }
     }
   }
@@ -1358,7 +1359,7 @@ function stopKimiPermissionPoll(sessionId) {
     kimiPermissionHolds.clear();
     for (const { timer } of kimiPermissionSuspectTimers.values()) clearTimeout(timer);
     kimiPermissionSuspectTimers.clear();
-    if (typeof ctx.clearKimiNotifyBubbles === "function") ctx.clearKimiNotifyBubbles();
+    if (typeof ctx.clearKimiNotifyBubbles === "function") ctx.clearKimiNotifyBubbles(undefined, "kimi-stop-all");
     applyResolvedDisplayState();
     return;
   }
@@ -1367,10 +1368,10 @@ function stopKimiPermissionPoll(sessionId) {
   if (existing) {
     if (existing.timer) clearTimeout(existing.timer);
     kimiPermissionHolds.delete(sessionId);
-    if (typeof ctx.clearKimiNotifyBubbles === "function") ctx.clearKimiNotifyBubbles(sessionId);
+    if (typeof ctx.clearKimiNotifyBubbles === "function") ctx.clearKimiNotifyBubbles(sessionId, "kimi-stop-session");
     applyResolvedDisplayState();
   } else if (cancelled) {
-    if (typeof ctx.clearKimiNotifyBubbles === "function") ctx.clearKimiNotifyBubbles(sessionId);
+    if (typeof ctx.clearKimiNotifyBubbles === "function") ctx.clearKimiNotifyBubbles(sessionId, "kimi-stop-suspect");
     applyResolvedDisplayState();
   }
 }

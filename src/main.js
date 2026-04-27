@@ -43,6 +43,7 @@ const {
   getLaunchSizingWorkArea,
   getProportionalPixelSize,
 } = require("./size-utils");
+const { keepOutOfTaskbar } = require("./taskbar");
 
 // ── Autoplay policy: allow sound playback without user gesture ──
 // MUST be set before any BrowserWindow is created (before app.whenReady)
@@ -302,6 +303,51 @@ function captureCurrentDisplaySnapshot(bounds) {
 
 let _codexMonitor = null;          // Codex CLI JSONL log polling instance
 let _geminiMonitor = null;         // Gemini CLI session JSON polling instance
+const CODEX_OFFICIAL_LOG_SUPPRESS_TTL_MS = 10 * 60 * 1000;
+const CODEX_LOG_EVENTS_COVERED_BY_OFFICIAL_HOOKS = new Set([
+  "session_meta",
+  "event_msg:task_started",
+  "event_msg:user_message",
+  "event_msg:guardian_assessment",
+  "response_item:function_call",
+  "response_item:custom_tool_call",
+  "event_msg:exec_command_end",
+  "event_msg:patch_apply_end",
+  "event_msg:custom_tool_call_output",
+  "event_msg:task_complete",
+]);
+const codexOfficialHookSessions = new Map();
+
+function markCodexOfficialHookSession(sessionId) {
+  if (!sessionId) return;
+  codexOfficialHookSessions.set(String(sessionId), Date.now());
+}
+
+function hasRecentCodexOfficialHookSession(sessionId) {
+  const lastHookAt = codexOfficialHookSessions.get(String(sessionId));
+  if (!lastHookAt) return false;
+  if (Date.now() - lastHookAt > CODEX_OFFICIAL_LOG_SUPPRESS_TTL_MS) {
+    codexOfficialHookSessions.delete(String(sessionId));
+    return false;
+  }
+  return true;
+}
+
+function shouldSuppressCodexLogEvent(sessionId, state, event) {
+  // P2: official PermissionRequest owns the interactive bubble. Drop the
+  // legacy JSONL codex-permission notification for hook-active sessions so the
+  // user does not see both the real approval bubble and the old "Got it" hint.
+  if (state === "codex-permission") return hasRecentCodexOfficialHookSession(sessionId);
+  if (!CODEX_LOG_EVENTS_COVERED_BY_OFFICIAL_HOOKS.has(event)) return false;
+  return hasRecentCodexOfficialHookSession(sessionId);
+}
+
+function updateSessionFromServer(sessionId, state, event, opts = {}) {
+  if (opts && opts.agentId === "codex" && opts.hookSource === "codex-official") {
+    markCodexOfficialHookSession(sessionId);
+  }
+  return updateSession(sessionId, state, event, opts);
+}
 
 // Hook-based agents have no module-level monitor — they're gated at the
 // HTTP route layer. Only log-poll agents hit these branches.
@@ -477,16 +523,16 @@ function togglePetVisibility() {
   if (_mini.getMiniTransitioning()) return;
   if (petHidden) {
     win.showInactive();
-    if (isLinux) win.setSkipTaskbar(true);
+    keepOutOfTaskbar(win);
     if (hitWin && !hitWin.isDestroyed()) {
       hitWin.showInactive();
-      if (isLinux) hitWin.setSkipTaskbar(true);
+      keepOutOfTaskbar(hitWin);
     }
     // Restore any permission bubbles that were hidden
     for (const perm of pendingPermissions) {
       if (perm.bubble && !perm.bubble.isDestroyed()) {
         perm.bubble.showInactive();
-        if (isLinux) perm.bubble.setSkipTaskbar(true);
+        keepOutOfTaskbar(perm.bubble);
       }
     }
     syncUpdateBubbleVisibility();
@@ -530,10 +576,10 @@ function bringPetToPrimaryDisplay() {
     togglePetVisibility();
   } else {
     win.showInactive();
-    if (isLinux) win.setSkipTaskbar(true);
+    keepOutOfTaskbar(win);
     if (hitWin && !hitWin.isDestroyed()) {
       hitWin.showInactive();
-      if (isLinux) hitWin.setSkipTaskbar(true);
+      keepOutOfTaskbar(hitWin);
     }
   }
 
@@ -1144,7 +1190,7 @@ const _serverCtx = {
   isAgentEnabled: (agentId) => _isAgentEnabled({ agents: _settingsController.get("agents") }, agentId),
   isAgentPermissionsEnabled: (agentId) => _isAgentPermissionsEnabled({ agents: _settingsController.get("agents") }, agentId),
   setState,
-  updateSession,
+  updateSession: updateSessionFromServer,
   resolvePermissionEntry,
   sendPermissionResponse,
   showPermissionBubble,
@@ -1221,21 +1267,31 @@ function startTopmostWatchdog() {
   topmostWatchdog = setInterval(() => {
     if (win && !win.isDestroyed()) {
       win.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
+      keepOutOfTaskbar(win);
     }
     // Keep hitWin topmost too
     if (hitWin && !hitWin.isDestroyed()) {
       hitWin.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
+      keepOutOfTaskbar(hitWin);
     }
     for (const perm of pendingPermissions) {
-      if (perm.bubble && !perm.bubble.isDestroyed() && perm.bubble.isVisible()) perm.bubble.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
+      if (perm.bubble && !perm.bubble.isDestroyed() && perm.bubble.isVisible()) {
+        perm.bubble.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
+        keepOutOfTaskbar(perm.bubble);
+      }
     }
     const updateBubbleWin = _updateBubble.getBubbleWindow();
     if (updateBubbleWin && !updateBubbleWin.isDestroyed() && updateBubbleWin.isVisible()) {
       updateBubbleWin.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
+      keepOutOfTaskbar(updateBubbleWin);
     }
     const sessionHudWin = getSessionHudWindow();
     if (sessionHudWin && !sessionHudWin.isDestroyed() && sessionHudWin.isVisible()) {
       sessionHudWin.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
+      keepOutOfTaskbar(sessionHudWin);
+    }
+    if (contextMenuOwner && !contextMenuOwner.isDestroyed()) {
+      keepOutOfTaskbar(contextMenuOwner);
     }
   }, TOPMOST_WATCHDOG_MS);
 }
@@ -1435,12 +1491,23 @@ function wireSettingsSubscribers() {
     if (
       ("notificationBubbleAutoCloseSeconds" in changes && changes.notificationBubbleAutoCloseSeconds === 0) ||
       ("hideBubbles" in changes && changes.hideBubbles === true)
+      ) {
+        try {
+          clearCodexNotifyBubbles(undefined, "settings-policy-disabled");
+          clearKimiNotifyBubbles(undefined, "settings-policy-disabled");
+        } catch (err) {
+          console.warn("Clawd: clear notification bubbles failed:", err && err.message);
+        }
+    } else if (
+      "notificationBubbleAutoCloseSeconds" in changes &&
+      changes.notificationBubbleAutoCloseSeconds > 0
     ) {
       try {
-        clearCodexNotifyBubbles();
-        clearKimiNotifyBubbles();
+        if (_perm && typeof _perm.refreshPassiveNotifyAutoClose === "function") {
+          _perm.refreshPassiveNotifyAutoClose();
+        }
       } catch (err) {
-        console.warn("Clawd: clear notification bubbles failed:", err && err.message);
+        console.warn("Clawd: refresh notification bubble timers failed:", err && err.message);
       }
     }
     if (
@@ -1451,6 +1518,17 @@ function wireSettingsSubscribers() {
         if (_updateBubble && typeof _updateBubble.hideForPolicy === "function") _updateBubble.hideForPolicy();
       } catch (err) {
         console.warn("Clawd: hide update bubble failed:", err && err.message);
+      }
+    } else if (
+      "updateBubbleAutoCloseSeconds" in changes &&
+      changes.updateBubbleAutoCloseSeconds > 0
+    ) {
+      try {
+        if (_updateBubble && typeof _updateBubble.refreshAutoCloseForPolicy === "function") {
+          _updateBubble.refreshAutoCloseForPolicy();
+        }
+      } catch (err) {
+        console.warn("Clawd: refresh update bubble timer failed:", err && err.message);
       }
     }
     if ("bubbleFollowPet" in changes) {
@@ -3070,7 +3148,10 @@ function createWindow() {
     win.on("close", (event) => {
       if (!isQuitting) {
         event.preventDefault();
-        if (!win.isVisible()) win.showInactive();
+        if (!win.isVisible()) {
+          win.showInactive();
+          keepOutOfTaskbar(win);
+        }
       }
     });
     win.on("unresponsive", () => {
@@ -3087,8 +3168,7 @@ function createWindow() {
   win.loadFile(path.join(__dirname, "index.html"));
   applyPetWindowBounds(initialVirtualBounds);
   win.showInactive();
-  // Linux WMs may reset skipTaskbar after showInactive — re-apply explicitly
-  if (isLinux) win.setSkipTaskbar(true);
+  keepOutOfTaskbar(win);
   // macOS: apply after showInactive() — it resets NSWindowCollectionBehavior
   reapplyMacVisibility();
 
@@ -3142,8 +3222,7 @@ function createWindow() {
     hitWin.setIgnoreMouseEvents(false);  // PERMANENT — never toggle
     if (isMac) hitWin.setFocusable(false);
     hitWin.showInactive();
-    // Linux WMs may reset skipTaskbar after showInactive — re-apply explicitly
-    if (isLinux) hitWin.setSkipTaskbar(true);
+    keepOutOfTaskbar(hitWin);
     if (isWin) {
       hitWin.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
     }
@@ -3654,11 +3733,11 @@ if (!gotTheLock) {
   app.on("second-instance", (_event, commandLine) => {
     if (win) {
       win.showInactive();
-      if (isLinux) win.setSkipTaskbar(true);
+      keepOutOfTaskbar(win);
     }
     if (hitWin && !hitWin.isDestroyed()) {
       hitWin.showInactive();
-      if (isLinux) hitWin.setSkipTaskbar(true);
+      keepOutOfTaskbar(hitWin);
     }
     if (shouldOpenSettingsWindowFromArgv(commandLine)) {
       openSettingsWindowWhenReady();
@@ -3699,6 +3778,7 @@ if (!gotTheLock) {
       const CodexLogMonitor = require("../agents/codex-log-monitor");
       const codexAgent = require("../agents/codex");
       _codexMonitor = new CodexLogMonitor(codexAgent, (sid, state, event, extra) => {
+        if (shouldSuppressCodexLogEvent(sid, state, event)) return;
         if (state === "codex-permission") {
           updateSession(sid, "notification", event, {
             cwd: extra.cwd,
@@ -3711,7 +3791,7 @@ if (!gotTheLock) {
           });
           return;
         }
-        clearCodexNotifyBubbles(sid);
+        clearCodexNotifyBubbles(sid, `codex-state-transition:${state}`);
         updateSession(sid, state, event, {
           cwd: extra.cwd,
           agentId: "codex",
