@@ -6,8 +6,9 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const childProcess = require("child_process");
 const { buildPermissionUrl, DEFAULT_SERVER_PORT, PERMISSION_PATH, readRuntimePort, resolveNodeBin } = require("./server-config");
-const { writeJsonAtomic, asarUnpackedPath } = require("./json-utils");
+const { writeJsonAtomic, writeJsonAtomicAsync, asarUnpackedPath } = require("./json-utils");
 
 const DEFAULT_PARENT_DIR = path.join(os.homedir(), ".claude");
 const DEFAULT_CONFIG_PATH = path.join(DEFAULT_PARENT_DIR, "settings.json");
@@ -50,6 +51,8 @@ const UNKNOWN_CLAUDE_VERSION = Object.freeze({
   source: null,
   status: "unknown",
 });
+let cachedClaudeVersionInfo = null;
+let cachedClaudeVersionPromise = null;
 
 /**
  * Compare two semver strings: return true if a < b.
@@ -247,6 +250,77 @@ function getClaudeVersion(options = {}) {
     if (fallback && !fallbackInfo) fallbackInfo = fallback;
   }
   return fallbackInfo || { ...UNKNOWN_CLAUDE_VERSION };
+}
+
+async function getClaudeVersionAsync(options = {}) {
+  if (options.resetCache) {
+    cachedClaudeVersionInfo = null;
+    cachedClaudeVersionPromise = null;
+  }
+  if (cachedClaudeVersionInfo) return cachedClaudeVersionInfo;
+  if (cachedClaudeVersionPromise) return cachedClaudeVersionPromise;
+
+  const compute = async () => {
+    const platform = options.platform || process.platform;
+    const homeDir = options.homeDir || os.homedir();
+    const execFile = options.execFile || ((command, args, execOptions) => new Promise((resolve, reject) => {
+      childProcess.execFile(command, args, execOptions, (err, stdout, stderr) => {
+        if (err) reject(err);
+        else resolve({ stdout, stderr });
+      });
+    }));
+    const candidates = Array.isArray(options.candidates)
+      ? [...options.candidates]
+      : [];
+
+    if (!candidates.length) {
+      if (platform === "darwin") {
+        candidates.push(
+          path.join(homeDir, ".local", "bin", "claude"),
+          path.join(homeDir, ".claude", "local", "claude"),
+          "/opt/homebrew/bin/claude",
+          "/usr/local/bin/claude"
+        );
+      }
+      candidates.push(...getClaudePathCandidates(options));
+      candidates.push("claude");
+    }
+
+    const seen = new Set();
+    let fallbackInfo = null;
+    for (const candidate of candidates) {
+      const key = platform === "win32" ? candidate.toLowerCase() : candidate;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      try {
+        const out = await execFile(candidate, ["--version"], {
+          encoding: "utf8",
+          timeout: 5000,
+          windowsHide: true,
+        });
+        const stdout = typeof out === "string" ? out : out && typeof out.stdout === "string" ? out.stdout : "";
+        const version = parseClaudeVersion(stdout);
+        if (!version) continue;
+        const result = {
+          version,
+          source: candidate === "claude" ? "PATH:claude" : candidate,
+          status: "known",
+        };
+        cachedClaudeVersionInfo = result;
+        return result;
+      } catch {}
+
+      const fallback = readClaudeVersionFallback(candidate, options);
+      if (fallback && !fallbackInfo) fallbackInfo = fallback;
+    }
+    if (fallbackInfo) cachedClaudeVersionInfo = fallbackInfo;
+    return fallbackInfo || { ...UNKNOWN_CLAUDE_VERSION };
+  };
+
+  cachedClaudeVersionPromise = compute().finally(() => {
+    cachedClaudeVersionPromise = null;
+  });
+  return cachedClaudeVersionPromise;
 }
 
 const MARKER = "clawd-hook.js";
@@ -798,6 +872,205 @@ function registerHooks(options = {}) {
   };
 }
 
+async function registerHooksAsync(options = {}) {
+  const settingsPath = options.settingsPath || path.join(os.homedir(), ".claude", "settings.json");
+  const hookPort = getHookServerPort(options.port);
+  const hookScript = asarUnpackedPath(path.resolve(__dirname, "clawd-hook.js").replace(/\\/g, "/"));
+  const platform = options.platform || process.platform;
+
+  let settings = {};
+  try {
+    settings = JSON.parse(await fs.promises.readFile(settingsPath, "utf-8"));
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      throw new Error(`Failed to read settings.json: ${err.message}`);
+    }
+  }
+
+  if (!settings.hooks) settings.hooks = {};
+
+  const resolved = options.nodeBin !== undefined ? options.nodeBin : resolveNodeBin();
+  const nodeBin = resolved
+    || extractNodeBinFromSettings(settings, MARKER)
+    || "node";
+
+  let added = 0;
+  let skipped = 0;
+  let versionSkipped = 0;
+  let updated = 0;
+  let removed = 0;
+  let changed = false;
+
+  const versionInfo = options.claudeVersionInfo || await getClaudeVersionAsync(options);
+  const { supported: supportedVersionedHooks, unsupported: unsupportedVersionedHooks } =
+    getSupportedVersionedHooks(versionInfo);
+  const supportedVersionedEvents = new Set(supportedVersionedHooks.map((hook) => hook.event));
+  versionSkipped = unsupportedVersionedHooks.length;
+
+  const reconcileResult = reconcileVersionedHooks(settings, supportedVersionedEvents, versionInfo);
+  removed += reconcileResult.removed;
+  changed = changed || reconcileResult.changed;
+
+  for (const event of DEPRECATED_CORE_HOOKS) {
+    if (!Array.isArray(settings.hooks[event])) continue;
+    const result = removeMatchingCommandHooks(
+      settings.hooks[event],
+      (command) => command.includes(MARKER)
+    );
+    if (!result.changed) continue;
+    removed += result.removed;
+    changed = true;
+    if (result.entries.length > 0) settings.hooks[event] = result.entries;
+    else delete settings.hooks[event];
+  }
+
+  const hookEvents = [...CORE_HOOKS];
+  for (const { event } of supportedVersionedHooks) {
+    hookEvents.push(event);
+  }
+
+  for (const event of hookEvents) {
+    if (!Array.isArray(settings.hooks[event])) {
+      const existing = settings.hooks[event];
+      settings.hooks[event] = existing && typeof existing === "object" ? [existing] : [];
+      changed = true;
+    }
+
+    const desiredHook = buildCommandHookSpec(nodeBin, hookScript, event, {
+      platform,
+      remote: options.remote,
+    });
+    const commandSync = syncCommandHook(settings.hooks[event], MARKER, desiredHook);
+    if (commandSync.found) {
+      if (commandSync.changed) {
+        updated++;
+        changed = true;
+      } else {
+        skipped++;
+      }
+      continue;
+    }
+
+    settings.hooks[event].push({
+      matcher: "",
+      hooks: [desiredHook],
+    });
+    added++;
+  }
+
+  if (options.autoStart) {
+    const autoStartScript = asarUnpackedPath(path.resolve(__dirname, "auto-start.js").replace(/\\/g, "/"));
+
+    if (!Array.isArray(settings.hooks.SessionStart)) {
+      settings.hooks.SessionStart = [];
+      changed = true;
+    }
+
+    const autoStartHook = buildCommandHookSpec(nodeBin, autoStartScript, "", { platform });
+    const autoStartSync = syncCommandHook(settings.hooks.SessionStart, AUTO_START_MARKER, autoStartHook);
+    if (!autoStartSync.found) {
+      settings.hooks.SessionStart.unshift({
+        matcher: "",
+        hooks: [autoStartHook],
+      });
+      added++;
+    } else if (autoStartSync.changed) {
+      updated++;
+      changed = true;
+    } else {
+      skipped++;
+    }
+
+    const beforeLen = settings.hooks.SessionStart.length;
+    settings.hooks.SessionStart = settings.hooks.SessionStart.filter((entry) => {
+      if (!entry || typeof entry !== "object") return true;
+      if (typeof entry.command === "string" && entry.command.includes(LEGACY_AUTO_START_MARKER)) return false;
+      if (Array.isArray(entry.hooks)) {
+        if (entry.hooks.some((h) => h && typeof h.command === "string" && h.command.includes(LEGACY_AUTO_START_MARKER))) return false;
+      }
+      return true;
+    });
+    if (settings.hooks.SessionStart.length < beforeLen) changed = true;
+  }
+
+  for (const event of Object.keys(HTTP_HOOKS)) {
+    if (!Array.isArray(settings.hooks[event])) continue;
+    const result = removeMatchingCommandHooks(
+      settings.hooks[event],
+      (command) => command.includes(MARKER)
+    );
+    if (result.changed) {
+      settings.hooks[event] = result.entries;
+      removed += result.removed;
+      changed = true;
+    }
+  }
+
+  for (const [event, { matcher, hook }] of Object.entries(HTTP_HOOKS)) {
+    if (!Array.isArray(settings.hooks[event])) {
+      settings.hooks[event] = [];
+      changed = true;
+    }
+
+    const desiredHook = { ...hook, url: buildPermissionUrl(hookPort) };
+    const httpSync = syncHttpHook(settings.hooks[event], desiredHook.url);
+    if (httpSync.found) {
+      if (httpSync.changed) {
+        updated++;
+        changed = true;
+      } else {
+        skipped++;
+      }
+      continue;
+    }
+
+    settings.hooks[event].push({
+      matcher,
+      hooks: [desiredHook],
+    });
+    added++;
+  }
+
+  if (added > 0 || changed) {
+    await writeJsonAtomicAsync(settingsPath, settings);
+  }
+
+  if (!options.silent) {
+    const versionLabel = versionInfo.status === "known" ? versionInfo.version : "unknown";
+    const versionSource = versionInfo.source || "unavailable";
+    console.log(`Clawd hooks installed to ${settingsPath}`);
+    console.log(`  Claude Code version: ${versionLabel}`);
+    console.log(`  Detection source: ${versionSource}`);
+    if (versionInfo.status === "unknown") {
+      console.log("  Versioned hooks: disabled (Claude Code version could not be detected)");
+    }
+    console.log(`  Added: ${added} hooks`);
+    if (updated > 0) console.log(`  Updated: ${updated} stale hook paths`);
+    if (removed > 0) console.log(`  Removed: ${removed} incompatible versioned hooks`);
+    if (skipped > 0) console.log(`  Skipped: ${skipped} (already registered)`);
+    if (versionSkipped > 0) {
+      const reason = versionInfo.status === "known"
+        ? `version too old for ${unsupportedVersionedHooks.map((hook) => hook.event).join(", ")}`
+        : "version unknown, versioned hooks disabled";
+      console.log(`  Skipped: ${versionSkipped} (${reason})`);
+    }
+    console.log(`\nHook events: ${hookEvents.join(", ")}`);
+    if (Object.keys(HTTP_HOOKS).length > 0) {
+      console.log(`HTTP hooks: ${Object.keys(HTTP_HOOKS).join(", ")}`);
+    }
+  }
+
+  return {
+    added,
+    skipped,
+    updated,
+    removed,
+    version: versionInfo.version,
+    versionStatus: versionInfo.status,
+    versionSource: versionInfo.source,
+  };
+}
+
 function unregisterHooks(options = {}) {
   const settingsPath = options.settingsPath || path.join(os.homedir(), ".claude", "settings.json");
   let settings = {};
@@ -838,6 +1111,51 @@ function unregisterHooks(options = {}) {
 
   if (changed) {
     writeJsonAtomic(settingsPath, settings);
+  }
+
+  return { removed, changed };
+}
+
+async function unregisterHooksAsync(options = {}) {
+  const settingsPath = options.settingsPath || path.join(os.homedir(), ".claude", "settings.json");
+  let settings = {};
+  try {
+    settings = JSON.parse(await fs.promises.readFile(settingsPath, "utf-8"));
+  } catch (err) {
+    if (err.code === "ENOENT") return { removed: 0, changed: false };
+    throw new Error(`Failed to read settings.json: ${err.message}`);
+  }
+
+  if (!settings.hooks || typeof settings.hooks !== "object") {
+    return { removed: 0, changed: false };
+  }
+
+  let removed = 0;
+  let changed = false;
+  for (const [event, entries] of Object.entries(settings.hooks)) {
+    if (!Array.isArray(entries)) continue;
+
+    const commandResult = removeMatchingCommandHooks(
+      entries,
+      (command) => command.includes(MARKER)
+        || command.includes(AUTO_START_MARKER)
+        || command.includes(LEGACY_AUTO_START_MARKER)
+    );
+    const httpResult = removeMatchingHttpHooks(
+      commandResult.entries,
+      (hook) => isClawdPermissionHook(hook)
+    );
+
+    if (!commandResult.changed && !httpResult.changed) continue;
+
+    removed += commandResult.removed + httpResult.removed;
+    changed = true;
+    if (httpResult.entries.length > 0) settings.hooks[event] = httpResult.entries;
+    else delete settings.hooks[event];
+  }
+
+  if (changed) {
+    await writeJsonAtomicAsync(settingsPath, settings);
   }
 
   return { removed, changed };
@@ -911,7 +1229,9 @@ module.exports = {
   DEFAULT_PARENT_DIR,
   DEFAULT_CONFIG_PATH,
   registerHooks,
+  registerHooksAsync,
   unregisterHooks,
+  unregisterHooksAsync,
   unregisterAutoStart,
   isAutoStartRegistered,
   __test: {
@@ -922,6 +1242,7 @@ module.exports = {
     getClaudeVersionFromPackageJson,
     readClaudeVersionFallback,
     getClaudeVersion,
+    getClaudeVersionAsync,
     isClawdPermissionHook,
     isClawdPermissionUrl,
     removeMatchingHttpHooks,

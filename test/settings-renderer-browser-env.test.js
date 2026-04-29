@@ -290,6 +290,18 @@ describe("settings renderer browser environment", () => {
     assert.ok(i18nSource.includes("claudeHooksDisconnectConfirmKeep"));
   });
 
+  it("clears successful switch transient state so rerenders do not keep wait cursors", () => {
+    const coreSource = fs.readFileSync(SETTINGS_UI_CORE, "utf8");
+    assert.ok(
+      coreSource.includes("clearTransientState(seq);\n          setSwitchVisual(sw, nextVisual, { pending: false });"),
+      "successful switch actions must delete transient pending state before any later rerender"
+    );
+    assert.ok(
+      !coreSource.includes("setTransientState({ visualOn: nextVisual, pending: false, seq });"),
+      "leaving a non-pending transient row lets rerendered controls inherit stale pending state"
+    );
+  });
+
   it("uses a roomier grid layout for Settings confirmation buttons", () => {
     const html = fs.readFileSync(SETTINGS_HTML, "utf8");
     assert.ok(/\.settings-confirm-modal\s*\{[\s\S]*width:\s*min\(480px,\s*100%\);/.test(html));

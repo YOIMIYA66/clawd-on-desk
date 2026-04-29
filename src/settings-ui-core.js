@@ -233,7 +233,7 @@
             showToast(t("toastSaveFailed") + msg, { error: true });
             return;
           }
-          setTransientState({ visualOn: nextVisual, pending: false, seq });
+          clearTransientState(seq);
           setSwitchVisual(sw, nextVisual, { pending: false });
         })
         .catch((err) => {

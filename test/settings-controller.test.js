@@ -104,6 +104,28 @@ describe("applyUpdate sync invariant", () => {
     assert.deepStrictEqual(order, ["start:1:S", "end:1:S", "start:2:M", "end:2:M"]);
     assert.strictEqual(ctrl.get("size"), "M");
   });
+
+  it("manageClaudeHooksAutomatically uses the async effect path without changing controller semantics", async () => {
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      loadResult: {
+        snapshot: { ...prefs.getDefaults(), manageClaudeHooksAutomatically: false },
+        locked: false,
+      },
+      injectedDeps: {
+        syncClaudeHooksNow: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        },
+        startClaudeSettingsWatcher: () => {},
+        stopClaudeSettingsWatcher: () => {},
+      },
+    });
+    const ret = ctrl.applyUpdate("manageClaudeHooksAutomatically", true);
+    assert.strictEqual(typeof ret.then, "function");
+    const result = await ret;
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(ctrl.get("manageClaudeHooksAutomatically"), true);
+  });
 });
 
 // Tiny helper — must be sync because controller's applyUpdate stays sync

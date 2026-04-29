@@ -3,7 +3,7 @@ const assert = require("node:assert");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { registerHooks, unregisterHooks, __test } = require("../hooks/install");
+const { registerHooks, unregisterHooks, registerHooksAsync, unregisterHooksAsync, __test } = require("../hooks/install");
 const {
   parseClaudeVersion,
   getWindowsClaudePathSuffixes,
@@ -11,6 +11,7 @@ const {
   getClaudePackageJsonCandidates,
   getClaudeVersionFromPackageJson,
   readClaudeVersionFallback,
+  getClaudeVersionAsync,
 } = __test;
 
 const tempDirs = [];
@@ -80,6 +81,60 @@ describe("Claude version detection helpers", () => {
     assert.strictEqual(parseClaudeVersion("2.1.109 (Claude Code)"), "2.1.109");
     assert.strictEqual(parseClaudeVersion("Claude Code vnext"), null);
     assert.strictEqual(parseClaudeVersion(null), null);
+  });
+
+  it("reuses the in-flight async Claude version probe", async () => {
+    let execCalls = 0;
+    const execFile = async () => {
+      execCalls++;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return { stdout: "Claude Code 2.1.109\n" };
+    };
+
+    const [a, b] = await Promise.all([
+      getClaudeVersionAsync({
+        platform: "linux",
+        pathEnv: "",
+        candidates: ["/usr/bin/claude"],
+        execFile,
+        resetCache: true,
+      }),
+      getClaudeVersionAsync({
+        platform: "linux",
+        pathEnv: "",
+        candidates: ["/usr/bin/claude"],
+        execFile,
+      }),
+    ]);
+
+    assert.deepStrictEqual(a, b);
+    assert.strictEqual(execCalls, 1);
+  });
+
+  it("reuses a cached async Claude version result after success", async () => {
+    let execCalls = 0;
+    const execFile = async () => {
+      execCalls++;
+      return { stdout: "Claude Code 2.1.109\n" };
+    };
+
+    const first = await getClaudeVersionAsync({
+      platform: "linux",
+      pathEnv: "",
+      candidates: ["/usr/bin/claude"],
+      execFile,
+      resetCache: true,
+    });
+    const second = await getClaudeVersionAsync({
+      platform: "linux",
+      pathEnv: "",
+      candidates: ["/usr/bin/claude"],
+      execFile,
+    });
+
+    assert.strictEqual(first.version, "2.1.109");
+    assert.deepStrictEqual(second, first);
+    assert.strictEqual(execCalls, 1);
   });
 
   it("normalizes Windows PATHEXT suffixes with stable order", () => {
@@ -930,5 +985,43 @@ describe("Hook installer unregisterHooks", () => {
     const settings = readSettings(settingsPath);
 
     assert.deepStrictEqual(settings.hooks, {});
+  });
+});
+
+describe("async hook installer parity", () => {
+  it("registerHooksAsync writes the same hook set as registerHooks", async () => {
+    const syncSettingsPath = makeTempSettings({});
+    const asyncSettingsPath = makeTempSettings({});
+
+    const syncResult = registerHooks({
+      silent: true,
+      settingsPath: syncSettingsPath,
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+    const asyncResult = await registerHooksAsync({
+      silent: true,
+      settingsPath: asyncSettingsPath,
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+
+    assert.deepStrictEqual(readSettings(asyncSettingsPath), readSettings(syncSettingsPath));
+    assert.deepStrictEqual(asyncResult, syncResult);
+  });
+
+  it("unregisterHooksAsync removes the same entries as unregisterHooks", async () => {
+    const initial = {
+      hooks: {
+        Stop: [{ matcher: "", hooks: [{ type: "command", command: '"/usr/bin/node" "/tmp/clawd-hook.js"' }] }],
+        PermissionRequest: [{ matcher: "", hooks: [{ type: "http", url: "http://127.0.0.1:23333/permission" }] }],
+      },
+    };
+    const syncSettingsPath = makeTempSettings(initial);
+    const asyncSettingsPath = makeTempSettings(initial);
+
+    const syncResult = unregisterHooks({ settingsPath: syncSettingsPath });
+    const asyncResult = await unregisterHooksAsync({ settingsPath: asyncSettingsPath });
+
+    assert.deepStrictEqual(readSettings(asyncSettingsPath), readSettings(syncSettingsPath));
+    assert.deepStrictEqual(asyncResult, syncResult);
   });
 });
