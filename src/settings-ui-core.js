@@ -787,6 +787,16 @@
     if (state.activeTab === "shortcuts") requestRender({ content: true });
   }
 
+  function clearTransientStateForChanges(changes) {
+    if (!changes || typeof changes !== "object") return;
+    for (const key of Object.keys(changes)) {
+      state.transientUiState.generalSwitches.delete(key);
+    }
+    if (Object.prototype.hasOwnProperty.call(changes, "agents")) {
+      state.transientUiState.agentSwitches.clear();
+    }
+  }
+
   function applyChanges(payload) {
     if (payload && payload.snapshot) {
       state.snapshot = payload.snapshot;
@@ -796,6 +806,7 @@
     if (!state.snapshot) return;
 
     const changes = payload && payload.changes;
+    clearTransientStateForChanges(changes);
     const needsAnimOverridesRefresh = !!(changes && (
       "theme" in changes || "themeVariant" in changes || "themeOverrides" in changes
     ));
