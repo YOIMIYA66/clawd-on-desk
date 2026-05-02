@@ -129,6 +129,41 @@ function getClaudePathCandidates(options = {}) {
   return candidates;
 }
 
+async function getClaudePathCandidatesAsync(options = {}) {
+  const platform = options.platform || process.platform;
+  const pathEnv = options.pathEnv !== undefined ? options.pathEnv : process.env.PATH;
+  const access = options.access || fs.promises.access.bind(fs.promises);
+
+  if (typeof pathEnv !== "string" || !pathEnv) return [];
+
+  const suffixes = platform === "win32"
+    ? getWindowsClaudePathSuffixes(options.pathExt !== undefined ? options.pathExt : process.env.PATHEXT)
+    : [""];
+  const delimiter = platform === "win32" ? ";" : ":";
+  const candidates = [];
+  const seen = new Set();
+
+  for (const rawDir of pathEnv.split(delimiter)) {
+    if (typeof rawDir !== "string") continue;
+    const dir = rawDir.trim().replace(/^"(.*)"$/, "$1");
+    if (!dir) continue;
+
+    for (const suffix of suffixes) {
+      const candidate = path.join(dir, `claude${suffix}`);
+      const key = platform === "win32" ? candidate.toLowerCase() : candidate;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      try {
+        await access(candidate);
+        candidates.push(candidate);
+      } catch {}
+    }
+  }
+
+  return candidates;
+}
+
 function getClaudePackageJsonCandidates(candidatePath, options = {}) {
   const platform = options.platform || process.platform;
   const existsSync = options.existsSync || fs.existsSync;
@@ -176,6 +211,53 @@ function getClaudePackageJsonCandidates(candidatePath, options = {}) {
   return candidates;
 }
 
+async function getClaudePackageJsonCandidatesAsync(candidatePath, options = {}) {
+  const platform = options.platform || process.platform;
+  const access = options.access || fs.promises.access.bind(fs.promises);
+  const readFile = options.readFile || fs.promises.readFile.bind(fs.promises);
+  const realpath = options.realpath || fs.promises.realpath.bind(fs.promises);
+  const stat = options.stat || fs.promises.stat.bind(fs.promises);
+
+  if (!path.isAbsolute(candidatePath)) return [];
+
+  const candidates = [];
+  const seen = new Set();
+  const addCandidate = async (packageJsonPath) => {
+    if (typeof packageJsonPath !== "string" || !packageJsonPath) return;
+    const key = platform === "win32" ? packageJsonPath.toLowerCase() : packageJsonPath;
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    try {
+      await access(packageJsonPath);
+      candidates.push(packageJsonPath);
+    } catch {}
+  };
+
+  const candidateDir = path.dirname(candidatePath);
+  await addCandidate(path.join(candidateDir, ...CLAUDE_PACKAGE_JSON_SEGMENTS));
+
+  try {
+    const resolvedPath = await realpath(candidatePath);
+    await addCandidate(path.join(path.dirname(resolvedPath), "package.json"));
+  } catch {}
+
+  try {
+    const statResult = await stat(candidatePath);
+    const isRegularFile = typeof statResult.isFile === "function" ? statResult.isFile() : true;
+    if (isRegularFile && typeof statResult.size === "number" && statResult.size <= MAX_CLAUDE_SHIM_BYTES) {
+      const shimSource = await readFile(candidatePath, "utf8");
+      const shimMatch = String(shimSource).match(CLAUDE_SHIM_CLI_PATTERN);
+      if (shimMatch) {
+        const cliPath = path.resolve(candidateDir, shimMatch[0].replace(/[\\/]/g, path.sep));
+        await addCandidate(path.join(path.dirname(cliPath), "package.json"));
+      }
+    }
+  } catch {}
+
+  return candidates;
+}
+
 function getClaudeVersionFromPackageJson(packageJsonPath, options = {}) {
   const readFileSync = options.readFileSync || fs.readFileSync;
 
@@ -193,9 +275,34 @@ function getClaudeVersionFromPackageJson(packageJsonPath, options = {}) {
   }
 }
 
+async function getClaudeVersionFromPackageJsonAsync(packageJsonPath, options = {}) {
+  const readFile = options.readFile || fs.promises.readFile.bind(fs.promises);
+
+  try {
+    const packageJson = JSON.parse(String(await readFile(packageJsonPath, "utf8")));
+    const version = parseClaudeVersion(packageJson.version);
+    if (!version) return null;
+    return {
+      version,
+      source: packageJsonPath,
+      status: "known",
+    };
+  } catch {
+    return null;
+  }
+}
+
 function readClaudeVersionFallback(candidatePath, options = {}) {
   for (const packageJsonPath of getClaudePackageJsonCandidates(candidatePath, options)) {
     const versionInfo = getClaudeVersionFromPackageJson(packageJsonPath, options);
+    if (versionInfo) return versionInfo;
+  }
+  return null;
+}
+
+async function readClaudeVersionFallbackAsync(candidatePath, options = {}) {
+  for (const packageJsonPath of await getClaudePackageJsonCandidatesAsync(candidatePath, options)) {
+    const versionInfo = await getClaudeVersionFromPackageJsonAsync(packageJsonPath, options);
     if (versionInfo) return versionInfo;
   }
   return null;
@@ -282,7 +389,7 @@ async function getClaudeVersionAsync(options = {}) {
           "/usr/local/bin/claude"
         );
       }
-      candidates.push(...getClaudePathCandidates(options));
+      candidates.push(...await getClaudePathCandidatesAsync(options));
       candidates.push("claude");
     }
 
@@ -310,7 +417,7 @@ async function getClaudeVersionAsync(options = {}) {
         return result;
       } catch {}
 
-      const fallback = readClaudeVersionFallback(candidate, options);
+      const fallback = await readClaudeVersionFallbackAsync(candidate, options);
       if (fallback && !fallbackInfo) fallbackInfo = fallback;
     }
     if (fallbackInfo) cachedClaudeVersionInfo = fallbackInfo;
@@ -1238,9 +1345,13 @@ module.exports = {
     parseClaudeVersion,
     getWindowsClaudePathSuffixes,
     getClaudePathCandidates,
+    getClaudePathCandidatesAsync,
     getClaudePackageJsonCandidates,
+    getClaudePackageJsonCandidatesAsync,
     getClaudeVersionFromPackageJson,
+    getClaudeVersionFromPackageJsonAsync,
     readClaudeVersionFallback,
+    readClaudeVersionFallbackAsync,
     getClaudeVersion,
     getClaudeVersionAsync,
     isClawdPermissionHook,
