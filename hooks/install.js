@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const childProcess = require("child_process");
-const { buildPermissionUrl, DEFAULT_SERVER_PORT, PERMISSION_PATH, readRuntimePort, resolveNodeBin } = require("./server-config");
+const { buildPermissionUrl, DEFAULT_SERVER_PORT, PERMISSION_PATH, readRuntimePort, resolveNodeBin, resolveNodeBinAsync } = require("./server-config");
 const { writeJsonAtomic, writeJsonAtomicAsync, asarUnpackedPath } = require("./json-utils");
 
 const DEFAULT_PARENT_DIR = path.join(os.homedir(), ".claude");
@@ -996,9 +996,11 @@ async function registerHooksAsync(options = {}) {
 
   if (!settings.hooks) settings.hooks = {};
 
-  const resolved = options.nodeBin !== undefined ? options.nodeBin : resolveNodeBin();
-  const nodeBin = resolved
-    || extractNodeBinFromSettings(settings, MARKER)
+  const configuredNodeBin = options.nodeBin !== undefined
+    ? options.nodeBin
+    : extractNodeBinFromSettings(settings, MARKER);
+  const nodeBin = configuredNodeBin
+    || await resolveNodeBinAsync(options)
     || "node";
 
   let added = 0;

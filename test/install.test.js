@@ -1200,6 +1200,74 @@ describe("Hook installer unregisterHooks", () => {
 });
 
 describe("async hook installer parity", () => {
+  it("registerHooksAsync preserves an existing Node path before probing asynchronously", async () => {
+    const existingAbsPath = "/Users/tester/.nvm/versions/node/v20.11.0/bin/node";
+    const settingsPath = makeTempSettings({
+      hooks: {
+        Stop: [
+          {
+            matcher: "",
+            hooks: [{ type: "command", command: `"${existingAbsPath}" "/app/hooks/clawd-hook.js" Stop` }],
+          },
+        ],
+      },
+    });
+
+    await registerHooksAsync({
+      silent: true,
+      settingsPath,
+      platform: "darwin",
+      isElectron: true,
+      homeDir: "/Users/tester",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+      async access() {
+        throw new Error("async node probing should not run when settings already has a node path");
+      },
+      async execFile() {
+        throw new Error("async shell probing should not run when settings already has a node path");
+      },
+      accessSync() {
+        throw new Error("sync node probing should not run");
+      },
+      execFileSync() {
+        throw new Error("sync shell probing should not run");
+      },
+    });
+
+    const commands = getClawdCommands(readSettings(settingsPath), "Stop");
+    assert.ok(commands.some((command) => command.includes(existingAbsPath)), commands.join("\n"));
+  });
+
+  it("registerHooksAsync resolves Node with async probes without calling sync probes", async () => {
+    const settingsPath = makeTempSettings({});
+    const nodeBin = "/opt/homebrew/bin/node";
+
+    await registerHooksAsync({
+      silent: true,
+      settingsPath,
+      platform: "darwin",
+      isElectron: true,
+      homeDir: "/Users/tester",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+      async access(candidate) {
+        if (candidate === nodeBin) return;
+        throw new Error("ENOENT");
+      },
+      async execFile() {
+        throw new Error("shell probing should not run after a well-known path succeeds");
+      },
+      accessSync() {
+        throw new Error("sync access should not run");
+      },
+      execFileSync() {
+        throw new Error("sync exec should not run");
+      },
+    });
+
+    const commands = getClawdCommands(readSettings(settingsPath), "Stop");
+    assert.ok(commands.some((command) => command.startsWith(`"${nodeBin}" "`)), commands.join("\n"));
+  });
+
   it("registerHooksAsync writes the same hook set as registerHooks", async () => {
     const syncSettingsPath = makeTempSettings({});
     const asyncSettingsPath = makeTempSettings({});
