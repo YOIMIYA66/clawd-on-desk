@@ -126,6 +126,47 @@ describe("applyUpdate sync invariant", () => {
     assert.strictEqual(result.status, "ok");
     assert.strictEqual(ctrl.get("manageClaudeHooksAutomatically"), true);
   });
+
+  it("serializes Claude hook update and command work on one shared lock", async () => {
+    const calls = [];
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      loadResult: {
+        snapshot: { ...prefs.getDefaults(), manageClaudeHooksAutomatically: false },
+        locked: false,
+      },
+      injectedDeps: {
+        syncClaudeHooksNow: async () => {
+          calls.push("sync:start");
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          calls.push("sync:end");
+        },
+        startClaudeSettingsWatcher: () => calls.push("watcher:start"),
+        stopClaudeSettingsWatcher: () => calls.push("watcher:stop"),
+        uninstallClaudeHooksNow: async () => {
+          calls.push("uninstall:start");
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          calls.push("uninstall:end");
+        },
+      },
+    });
+
+    const enable = ctrl.applyUpdate("manageClaudeHooksAutomatically", true);
+    const disconnect = ctrl.applyCommand("uninstallHooks");
+    const results = await Promise.all([enable, disconnect]);
+
+    assert.strictEqual(results[0].status, "ok");
+    assert.strictEqual(results[1].status, "ok");
+    assert.deepStrictEqual(calls, [
+      "sync:start",
+      "sync:end",
+      "watcher:start",
+      "watcher:stop",
+      "uninstall:start",
+      "uninstall:end",
+    ]);
+    assert.strictEqual(ctrl.get("manageClaudeHooksAutomatically"), false);
+  });
 });
 
 // Tiny helper — must be sync because controller's applyUpdate stays sync

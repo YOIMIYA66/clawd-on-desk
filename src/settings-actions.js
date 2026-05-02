@@ -89,6 +89,7 @@ const AUTO_REPAIRABLE_AGENT_IDS = new Set([
   "kimi-cli",
   "opencode",
 ]);
+const CLAUDE_HOOKS_LOCK_KEY = "claude-hooks";
 
 // ── Validator helpers ──
 
@@ -332,6 +333,7 @@ const updateRegistry = {
   //   (permission denied, disk full, corrupt JSON) MUST prevent the prefs
   //   commit so the UI never shows "on" while the file is unchanged.
   autoStartWithClaude: {
+    lockKey: CLAUDE_HOOKS_LOCK_KEY,
     validate: requireBoolean("autoStartWithClaude"),
     effect(value, deps) {
       if (deps && deps.snapshot && deps.snapshot.manageClaudeHooksAutomatically === false) {
@@ -357,6 +359,7 @@ const updateRegistry = {
   },
 
   manageClaudeHooksAutomatically: {
+    lockKey: CLAUDE_HOOKS_LOCK_KEY,
     validate: requireBoolean("manageClaudeHooksAutomatically"),
     effect(value, deps) {
       if (
@@ -1829,6 +1832,9 @@ function resizePet(payload, deps) {
     return { status: "error", message: `resizePet: ${err && err.message}` };
   }
 }
+
+installHooks.lockKey = CLAUDE_HOOKS_LOCK_KEY;
+uninstallHooks.lockKey = CLAUDE_HOOKS_LOCK_KEY;
 
 const commandRegistry = {
   removeTheme,
